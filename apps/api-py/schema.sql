@@ -35,13 +35,14 @@ create table if not exists public.checkins (
 
 create index if not exists checkins_route_id_idx on public.checkins (route_id);
 
--- RLS: the API uses the service-role key (bypasses RLS), so these tables can stay
--- with RLS disabled for now — access control is enforced in apps/api-py's routers,
--- not at the Postgres layer. Revisit before anything but the API talks to this DB
--- directly (e.g. if apps/web is ever given direct table access with the anon key).
-alter table public.dogs disable row level security;
-alter table public.routes disable row level security;
-alter table public.checkins disable row level security;
+-- RLS is ENABLED with NO policies on purpose. The publishable/anon key ships inside the web bundle,
+-- so anyone can call the REST API of this project directly; with RLS on and no policy those calls get
+-- nothing. The API uses the service-role key, which bypasses RLS, and enforces access control itself
+-- (every query is scoped by the caller's id). The browser never reads these tables: it only uses
+-- supabase.auth for login. If the web app ever needs direct table access, add explicit policies first.
+alter table public.dogs enable row level security;
+alter table public.routes enable row level security;
+alter table public.checkins enable row level security;
 
 -- S1: the marketplace — walker profiles, the dog questionnaire and walk requests.
 -- Column names/types match what apps/api-py/src/cantrack_api/routers/{walker_profiles,requests}.py
@@ -79,5 +80,5 @@ create index if not exists walk_requests_owner_id_idx on public.walk_requests (o
 create index if not exists walk_requests_walker_status_idx on public.walk_requests (walker_id, status);
 create index if not exists walk_requests_dog_status_idx on public.walk_requests (dog_id, status);
 
-alter table public.walker_profiles disable row level security;
-alter table public.walk_requests disable row level security;
+alter table public.walker_profiles enable row level security;
+alter table public.walk_requests enable row level security;
