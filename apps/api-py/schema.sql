@@ -82,3 +82,53 @@ create index if not exists walk_requests_dog_status_idx on public.walk_requests 
 
 alter table public.walker_profiles enable row level security;
 alter table public.walk_requests enable row level security;
+
+-- S3: checkout with photos to the owner, the AI usage log and the private photo bucket.
+-- Column names/types match exactly what apps/api-py/src/cantrack_api/routers/checkouts.py queries.
+-- NOTE (PR 2 of S3): Nico runs this file by hand in the Supabase SQL Editor before the API is
+-- deployed; the bucket insert needs the storage schema, which only exists on a real project.
+
+-- note and ai_note are SEPARATE columns on purpose (PR #8 review): ai_note is what the vision
+-- model said (read-only provenance), note is the walker's own text (the only field PATCH writes,
+-- the only one the owner ever sees). dog_visible/ai_status carry the model's last answer state.
+create table if not exists public.checkouts (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.walk_requests (id) on delete cascade,
+  dog_id uuid not null references public.dogs (id) on delete cascade,
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  walker_id uuid not null references auth.users (id) on delete cascade,
+  photo_paths jsonb not null default '[]'::jsonb,
+  ai_note text,
+  note text,
+  dog_visible boolean,
+  ai_status text not null check (ai_status in ('ok', 'unavailable', 'quota')),
+  status text not null default 'draft' check (status in ('draft', 'sent')),
+  sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  -- One checkout per request: the API's 409 is a check-then-insert, and two tabs (or a
+  -- double tap on a flaky network) would otherwise race two drafts for the same walk.
+  unique (request_id)
+);
+
+create index if not exists checkouts_owner_status_sent_idx on public.checkouts (owner_id, status, sent_at desc);
+create index if not exists checkouts_walker_created_idx on public.checkouts (walker_id, created_at desc);
+create index if not exists checkouts_dog_status_idx on public.checkouts (dog_id, status);
+
+-- The AI quota counts CALLS, attributed by the time of each call (not by the checkout's
+-- created_at): one row per answered vision call, 60 per walker per UTC calendar month.
+create table if not exists public.ai_usage (
+  id uuid primary key default gen_random_uuid(),
+  walker_id uuid not null references auth.users (id) on delete cascade,
+  used_at timestamptz not null default now()
+);
+
+create index if not exists ai_usage_walker_used_idx on public.ai_usage (walker_id, used_at);
+
+alter table public.checkouts enable row level security;
+alter table public.ai_usage enable row level security;
+
+-- The checkout photos live in a PRIVATE bucket; the API serves them only as signed URLs
+-- (3600 s) and never calls get_public_url. Idempotent: re-running this file is safe.
+insert into storage.buckets (id, name, public)
+values ('checkout-photos', 'checkout-photos', false)
+on conflict (id) do nothing;
