@@ -132,3 +132,102 @@ alter table public.ai_usage enable row level security;
 insert into storage.buckets (id, name, public)
 values ('checkout-photos', 'checkout-photos', false)
 on conflict (id) do nothing;
+
+-- S4: walk bidding (FR-23..FR-27). Column names match routers/bidding.py.
+alter table public.walk_requests drop constraint if exists walk_requests_status_check;
+alter table public.walk_requests add constraint walk_requests_status_check
+  check (status in ('pending', 'accepted', 'declined', 'cancelled',
+                    'open', 'assigned', 'in_walk', 'done', 'expired'));
+alter table public.walk_requests alter column walker_id drop not null;
+alter table public.walk_requests add column if not exists duration_hours double precision not null default 1.0;
+alter table public.walk_requests add column if not exists window_end timestamptz;
+alter table public.walk_requests add column if not exists deadline_at timestamptz;
+
+create table if not exists public.walk_offers (
+  id uuid primary key default gen_random_uuid(),
+  walk_request_id uuid not null references public.walk_requests (id) on delete cascade,
+  walker_id uuid not null references auth.users (id) on delete cascade,
+  price_cop integer not null check (price_cop >= 0),
+  eta_min double precision not null check (eta_min >= 0),
+  distance_km double precision not null check (distance_km >= 0),
+  created_at timestamptz not null default now(),
+  unique (walk_request_id, walker_id)
+);
+create index if not exists walk_offers_request_idx on public.walk_offers (walk_request_id);
+
+create table if not exists public.walker_positions (
+  walker_id uuid primary key references auth.users (id) on delete cascade,
+  lat double precision not null,
+  lng double precision not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.dog_pack_links (
+  id uuid primary key default gen_random_uuid(),
+  dog_a uuid not null references public.dogs (id) on delete cascade,
+  dog_b uuid not null references public.dogs (id) on delete cascade,
+  unique (dog_a, dog_b)
+);
+
+create table if not exists public.walk_graph_edges (
+  id uuid primary key default gen_random_uuid(),
+  from_stop text not null,
+  to_stop text not null,
+  minutes double precision not null check (minutes >= 0)
+);
+create index if not exists walk_graph_edges_from_idx on public.walk_graph_edges (from_stop);
+
+create table if not exists public.walk_route_stops (
+  id uuid primary key default gen_random_uuid(),
+  walk_request_id uuid not null references public.walk_requests (id) on delete cascade,
+  dog_id uuid not null references public.dogs (id) on delete cascade,
+  stop_key text not null,
+  pickup_time timestamptz not null,
+  position integer not null
+);
+create index if not exists walk_route_stops_request_idx on public.walk_route_stops (walk_request_id);
+
+create table if not exists public.walker_cancel_buckets (
+  walker_id uuid primary key references auth.users (id) on delete cascade,
+  remaining integer not null check (remaining >= 0),
+  period_start timestamptz not null default now()
+);
+
+create table if not exists public.walk_ratings (
+  id uuid primary key default gen_random_uuid(),
+  walk_request_id uuid not null references public.walk_requests (id) on delete cascade,
+  walker_id uuid not null references auth.users (id) on delete cascade,
+  rating double precision not null check (rating >= 1 and rating <= 5),
+  created_at timestamptz not null default now(),
+  unique (walk_request_id)
+);
+create index if not exists walk_ratings_walker_idx on public.walk_ratings (walker_id, created_at desc);
+
+create table if not exists public.walk_timeline (
+  id uuid primary key default gen_random_uuid(),
+  walk_request_id uuid not null references public.walk_requests (id) on delete cascade,
+  kind text not null,
+  at timestamptz not null,
+  payload jsonb not null default '{}'::jsonb
+);
+create index if not exists walk_timeline_request_idx on public.walk_timeline (walk_request_id, at);
+
+create table if not exists public.walk_gps_points (
+  id uuid primary key default gen_random_uuid(),
+  walk_request_id uuid not null references public.walk_requests (id) on delete cascade,
+  at_epoch double precision not null,
+  lat double precision not null,
+  lng double precision not null
+);
+create index if not exists walk_gps_points_request_idx on public.walk_gps_points (walk_request_id, at_epoch);
+
+alter table public.walk_offers enable row level security;
+alter table public.walker_positions enable row level security;
+alter table public.dog_pack_links enable row level security;
+alter table public.walk_graph_edges enable row level security;
+alter table public.walk_route_stops enable row level security;
+alter table public.walker_cancel_buckets enable row level security;
+alter table public.walk_ratings enable row level security;
+alter table public.walk_timeline enable row level security;
+alter table public.walk_gps_points enable row level security;
+-- RLS stays policy-free on purpose (service-role API + caller-scoped queries, same as S1); the RLS audit is Plan 3.
