@@ -231,3 +231,126 @@ alter table public.walk_ratings enable row level security;
 alter table public.walk_timeline enable row level security;
 alter table public.walk_gps_points enable row level security;
 -- RLS stays policy-free on purpose (service-role API + caller-scoped queries, same as S1); the RLS audit is Plan 3.
+
+-- =============================================================================
+-- S5 hardening (Plan 3): defence in depth. The API uses the service-role key and
+-- BYPASSES RLS; every router query is already scoped to the caller's id, which is
+-- the real authorization boundary. These policies only bite if a client ever calls
+-- Supabase with the anon/publishable key directly. Owner-scoped tables restrict to
+-- auth.uid() = owner_id; walker-scoped to auth.uid() = walker_id; child tables scope
+-- through their parent row. Postgres has no `create policy if not exists`, so each
+-- block drops-then-creates to stay idempotent (safe to re-run this whole file).
+-- =============================================================================
+
+-- Owner-scoped: the dog's owner is the only principal.
+drop policy if exists "dogs_owner_all" on public.dogs;
+create policy "dogs_owner_all" on public.dogs
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+-- Walker-scoped: a walker owns their own routes.
+drop policy if exists "routes_walker_all" on public.routes;
+create policy "routes_walker_all" on public.routes
+  for all using (auth.uid() = walker_id) with check (auth.uid() = walker_id);
+
+-- Child of routes: scope through the parent route's walker.
+drop policy if exists "checkins_via_route" on public.checkins;
+create policy "checkins_via_route" on public.checkins
+  for all using (
+    exists (select 1 from public.routes r where r.id = checkins.route_id and r.walker_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.routes r where r.id = checkins.route_id and r.walker_id = auth.uid())
+  );
+
+-- Walker-scoped (PK is walker_id).
+drop policy if exists "walker_profiles_self" on public.walker_profiles;
+create policy "walker_profiles_self" on public.walker_profiles
+  for all using (auth.uid() = walker_id) with check (auth.uid() = walker_id);
+
+-- A walk request is visible to its owner and, once assigned, to its walker.
+drop policy if exists "walk_requests_party" on public.walk_requests;
+create policy "walk_requests_party" on public.walk_requests
+  for all using (auth.uid() = owner_id or auth.uid() = walker_id)
+  with check (auth.uid() = owner_id or auth.uid() = walker_id);
+
+-- Checkout: both parties of the walk.
+drop policy if exists "checkouts_party" on public.checkouts;
+create policy "checkouts_party" on public.checkouts
+  for all using (auth.uid() = owner_id or auth.uid() = walker_id)
+  with check (auth.uid() = owner_id or auth.uid() = walker_id);
+
+-- AI usage: the walker it is attributed to.
+drop policy if exists "ai_usage_walker" on public.ai_usage;
+create policy "ai_usage_walker" on public.ai_usage
+  for all using (auth.uid() = walker_id) with check (auth.uid() = walker_id);
+
+-- A walk offer belongs to the bidding walker; the request owner may read offers on their walk.
+drop policy if exists "walk_offers_party" on public.walk_offers;
+create policy "walk_offers_party" on public.walk_offers
+  for all using (
+    auth.uid() = walker_id
+    or exists (select 1 from public.walk_requests w where w.id = walk_offers.walk_request_id and w.owner_id = auth.uid())
+  ) with check (auth.uid() = walker_id);
+
+-- Walker's own last known position (PK is walker_id).
+drop policy if exists "walker_positions_self" on public.walker_positions;
+create policy "walker_positions_self" on public.walker_positions
+  for all using (auth.uid() = walker_id) with check (auth.uid() = walker_id);
+
+-- Pack links join two dogs; scope to a principal who owns either dog.
+drop policy if exists "dog_pack_links_via_dog" on public.dog_pack_links;
+create policy "dog_pack_links_via_dog" on public.dog_pack_links
+  for all using (
+    exists (select 1 from public.dogs d where d.id in (dog_pack_links.dog_a, dog_pack_links.dog_b) and d.owner_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.dogs d where d.id in (dog_pack_links.dog_a, dog_pack_links.dog_b) and d.owner_id = auth.uid())
+  );
+
+-- Reference data for routing (no per-user column): any authenticated principal may read, none may write.
+drop policy if exists "walk_graph_edges_read" on public.walk_graph_edges;
+create policy "walk_graph_edges_read" on public.walk_graph_edges
+  for select using (auth.uid() is not null);
+
+-- Route stops: scope through the parent walk request's parties.
+drop policy if exists "walk_route_stops_via_request" on public.walk_route_stops;
+create policy "walk_route_stops_via_request" on public.walk_route_stops
+  for all using (
+    exists (select 1 from public.walk_requests w where w.id = walk_route_stops.walk_request_id
+            and (w.owner_id = auth.uid() or w.walker_id = auth.uid()))
+  ) with check (
+    exists (select 1 from public.walk_requests w where w.id = walk_route_stops.walk_request_id
+            and (w.owner_id = auth.uid() or w.walker_id = auth.uid()))
+  );
+
+-- Walker's own cancellation bucket (PK is walker_id).
+drop policy if exists "walker_cancel_buckets_self" on public.walker_cancel_buckets;
+create policy "walker_cancel_buckets_self" on public.walker_cancel_buckets
+  for all using (auth.uid() = walker_id) with check (auth.uid() = walker_id);
+
+-- A rating is written against a walker; both parties of the walk may read it.
+drop policy if exists "walk_ratings_party" on public.walk_ratings;
+create policy "walk_ratings_party" on public.walk_ratings
+  for all using (
+    auth.uid() = walker_id
+    or exists (select 1 from public.walk_requests w where w.id = walk_ratings.walk_request_id and w.owner_id = auth.uid())
+  ) with check (auth.uid() = walker_id);
+
+-- Timeline + GPS breadcrumbs: scope through the parent walk request's parties.
+drop policy if exists "walk_timeline_via_request" on public.walk_timeline;
+create policy "walk_timeline_via_request" on public.walk_timeline
+  for all using (
+    exists (select 1 from public.walk_requests w where w.id = walk_timeline.walk_request_id
+            and (w.owner_id = auth.uid() or w.walker_id = auth.uid()))
+  ) with check (
+    exists (select 1 from public.walk_requests w where w.id = walk_timeline.walk_request_id
+            and (w.owner_id = auth.uid() or w.walker_id = auth.uid()))
+  );
+
+drop policy if exists "walk_gps_points_via_request" on public.walk_gps_points;
+create policy "walk_gps_points_via_request" on public.walk_gps_points
+  for all using (
+    exists (select 1 from public.walk_requests w where w.id = walk_gps_points.walk_request_id
+            and (w.owner_id = auth.uid() or w.walker_id = auth.uid()))
+  ) with check (
+    exists (select 1 from public.walk_requests w where w.id = walk_gps_points.walk_request_id
+            and (w.owner_id = auth.uid() or w.walker_id = auth.uid()))
+  );
