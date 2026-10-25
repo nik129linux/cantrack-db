@@ -269,6 +269,16 @@ alter table public.walk_requests add column if not exists report_distance_km dou
 alter table public.walk_requests add column if not exists report_duration_min integer
   check (report_duration_min >= 0);
 
+-- Login lockout (same SQL as migrations/003_login_attempts.sql).
+create table if not exists public.auth_login_attempts (
+  email_hash text primary key check (char_length(email_hash) = 64),
+  failed_count integer not null default 0 check (failed_count >= 0),
+  first_failed_at timestamptz,
+  locked_until timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.auth_login_attempts enable row level security;
+
 -- =============================================================================
 -- PR0 security: RLS is DENY-ALL again (no policies on any table).
 --
