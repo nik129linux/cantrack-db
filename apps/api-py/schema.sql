@@ -81,6 +81,14 @@ create index if not exists walk_requests_walker_status_idx on public.walk_reques
 create index if not exists walk_requests_dog_status_idx on public.walk_requests (dog_id, status);
 
 alter table public.walker_profiles enable row level security;
+
+-- Walker Perfil (W5, migration 004): phone, private avatar, Ley 1581 consent, last edit time.
+alter table public.walker_profiles add column if not exists phone text check (char_length(phone) <= 24);
+alter table public.walker_profiles add column if not exists avatar_path text;
+alter table public.walker_profiles add column if not exists consent_version text check (char_length(consent_version) <= 20);
+alter table public.walker_profiles add column if not exists consent_at timestamptz;
+alter table public.walker_profiles add column if not exists updated_at timestamptz not null default now();
+
 alter table public.walk_requests enable row level security;
 
 -- S3: checkout with photos to the owner, the AI usage log and the private photo bucket.
