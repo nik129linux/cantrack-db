@@ -321,3 +321,13 @@ drop policy if exists "walker_cancel_buckets_self" on public.walker_cancel_bucke
 drop policy if exists "walk_ratings_party" on public.walk_ratings;
 drop policy if exists "walk_timeline_via_request" on public.walk_timeline;
 drop policy if exists "walk_gps_points_via_request" on public.walk_gps_points;
+
+-- Migration 005: deleting a walker keeps the owners' walks and walk reports (FKs set null).
+alter table public.walk_requests drop constraint if exists walk_requests_walker_id_fkey;
+alter table public.walk_requests add constraint walk_requests_walker_id_fkey
+  foreign key (walker_id) references public.walker_profiles (walker_id) on delete set null;
+
+alter table public.checkouts alter column walker_id drop not null;
+alter table public.checkouts drop constraint if exists checkouts_walker_id_fkey;
+alter table public.checkouts add constraint checkouts_walker_id_fkey
+  foreign key (walker_id) references auth.users (id) on delete set null;
