@@ -54,6 +54,16 @@ create table if not exists public.walker_profiles (
   bio text,
   service_area text,
   price_per_walk integer not null check (price_per_walk >= 0),
+  -- Perfil del paseador (same SQL as 2026-11-14_walker_profile_experience.sql):
+  -- años de experiencia y tamaños de perro que acepta, ambos opcionales.
+  experience_years smallint
+    check (experience_years between 0 and 50),
+  dog_sizes text[]
+    check (dog_sizes <@ array['small', 'medium', 'large']::text[]),
+  -- Weekly net goal in COP, validated by the API's set_goal endpoint
+  -- (GOAL_MIN_COP=10000, GOAL_MAX_COP=5000000); nullable: no goal saved yet.
+  weekly_goal_cop integer
+    check (weekly_goal_cop between 10000 and 5000000),
   created_at timestamptz not null default now()
 );
 
@@ -253,9 +263,34 @@ create table if not exists public.owner_profiles (
   home_label text check (char_length(home_label) <= 120),
   consent_version text check (char_length(consent_version) <= 20),
   consent_at timestamptz,
+  -- Perfil del dueño (same SQL as 2026-11-12_owner_profile_sections.sql):
+  -- recogida, emergencia, veterinario, pago, avisos y favoritos.
+  pickup_notes text check (char_length(pickup_notes) <= 300),
+  handoff_method text check (handoff_method in ('in_person','doorman','key')),
+  emergency_name text check (char_length(emergency_name) <= 80),
+  emergency_relation text check (char_length(emergency_relation) <= 40),
+  emergency_phone text check (char_length(emergency_phone) <= 20),
+  vet_name text check (char_length(vet_name) <= 80),
+  vet_phone text check (char_length(vet_phone) <= 20),
+  payment_method text check (payment_method in ('cash','nequi','card')),
+  notify_prefs jsonb not null
+    default '{"walkStarted":true,"report":true,"walkDone":true,"offers":true}'::jsonb,
+  favorite_walker_ids uuid[] not null default '{}',
   updated_at timestamptz not null default now()
 );
 alter table public.owner_profiles enable row level security;
+
+-- Notas privadas del paseador sobre el perro de un cliente (same SQL as
+-- 2026-11-13_walker_dog_notes.sql): las lee y escribe quien las guarda; el API
+-- entra con la llave de servicio y la pantalla de Clientes nunca las muestra al dueño.
+create table if not exists public.walker_dog_notes (
+  walker_id uuid not null references auth.users (id) on delete cascade,
+  dog_id uuid not null references public.dogs (id) on delete cascade,
+  note text check (char_length(note) <= 500),
+  updated_at timestamptz not null default now(),
+  primary key (walker_id, dog_id)
+);
+alter table public.walker_dog_notes enable row level security;
 
 -- Explorar (PR2): the typed-request assistant's daily quota, reserved before each call.
 create table if not exists public.owner_ai_usage (
