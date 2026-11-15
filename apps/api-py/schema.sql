@@ -316,6 +316,10 @@ alter table public.walk_requests add column if not exists report_duration_min in
 alter table public.walk_requests add column if not exists pickup_label text
   check (char_length(pickup_label) <= 120);
 
+-- Payment method (migration 007): how the owner will pay, chosen when publishing; walkers see it.
+alter table public.walk_requests add column if not exists payment_method text
+  check (payment_method in ('cash', 'nequi', 'card'));
+
 -- Login lockout (same SQL as migrations/003_login_attempts.sql).
 create table if not exists public.auth_login_attempts (
   email_hash text primary key check (char_length(email_hash) = 64),
