@@ -312,6 +312,10 @@ alter table public.walk_requests add column if not exists report_distance_km dou
 alter table public.walk_requests add column if not exists report_duration_min integer
   check (report_duration_min >= 0);
 
+-- Pickup field (migration 006): the address text the owner picked, shown to the walker.
+alter table public.walk_requests add column if not exists pickup_label text
+  check (char_length(pickup_label) <= 120);
+
 -- Login lockout (same SQL as migrations/003_login_attempts.sql).
 create table if not exists public.auth_login_attempts (
   email_hash text primary key check (char_length(email_hash) = 64),
