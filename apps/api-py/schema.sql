@@ -320,6 +320,9 @@ alter table public.walk_requests add column if not exists pickup_label text
 alter table public.walk_requests add column if not exists payment_method text
   check (payment_method in ('cash', 'nequi', 'card'));
 
+-- Voy en camino (migration 008): when the walker started heading to the pickup; the owner follows from then.
+alter table public.walk_requests add column if not exists en_route_at timestamptz;
+
 -- Login lockout (same SQL as migrations/003_login_attempts.sql).
 create table if not exists public.auth_login_attempts (
   email_hash text primary key check (char_length(email_hash) = 64),
