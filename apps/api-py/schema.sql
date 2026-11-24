@@ -5,6 +5,11 @@
 
 create extension if not exists vector;
 
+-- Private avatars and reference photos (migrations/009_avatars_bucket.sql).
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', false, 2097152, array['image/webp', 'image/jpeg', 'image/png'])
+on conflict (id) do nothing;
+
 create table if not exists public.dogs (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users (id) on delete cascade,
