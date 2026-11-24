@@ -31,7 +31,6 @@ The backend's strict Supabase fake reads `apps/api-py/schema.sql` during its tes
 
 | Component | Repository |
 |---|---|
-| Complete source | https://github.com/nik129linux/cantrack |
 | Frontend | https://github.com/nik129linux/cantrack-frontend |
 | Backend | https://github.com/nik129linux/cantrack-backend |
 | Database | https://github.com/nik129linux/cantrack-db |
